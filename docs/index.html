@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kalshi-predictit-arb — Kalshi↔PredictIt cross-venue arbitrage API</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; max-width: 860px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; color: #1a1a1a; }
+  h1 { font-size: 1.8rem; } h2 { margin-top: 2rem; border-bottom: 1px solid #ddd; padding-bottom: .3rem; }
+  code, pre { background: #f4f4f4; border-radius: 4px; }
+  code { padding: .1em .35em; font-size: .92em; }
+  pre { padding: 1rem; overflow-x: auto; font-size: .85em; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid #ddd; padding: .5rem .7rem; text-align: left; font-size: .92em; }
+  th { background: #f4f4f4; }
+  .warn { background: #fff8e1; border-left: 4px solid #f5a623; padding: .8rem 1rem; margin: 1rem 0; }
+</style>
+</head>
+<body>
+
+<h1>kalshi-predictit-arb</h1>
+<p>Pay-per-call HTTP API that matches <strong>Kalshi</strong> markets to <strong>PredictIt</strong> contracts and returns both arbitrage directions priced <em>after</em> each venue's real fee drag, with worst-case net across settlement outcomes.</p>
+<p>Base URL: <code>https://x402.bankr.bot/0x69fb671637ed68881f66b9ebf305ec3ef5574f65/kalshi-predictit-arb</code><br>
+Operator: built and operated by Team Takatini · Status: <strong>live</strong> · No UI, no execution — data only.</p>
+
+<h2>What it computes (server-side)</h2>
+<ul>
+  <li><strong>Entity resolution:</strong> Kalshi markets matched to PredictIt contracts, gated on state, district, office, party, numeric strike, and cycle year. A party mismatch is a hard reject.</li>
+  <li><strong>Both arb directions priced</strong> with real fee drag: Kalshi taker fee <code>ceil(7 · P · (1−P))</code>¢ per contract per leg; PredictIt 10% of winning-leg profit + 5% withdrawal drag.</li>
+  <li><strong>Worst-case net</strong> across settlement outcomes. <code>executable: true</code> only at ≥ 1¢ net after <em>all</em> fee drag.</li>
+  <li><strong>Depth:</strong> Kalshi order book walked to $100 / $500 / $1,000 notional. (PredictIt publishes no public depth; size within its $850/contract position limit.)</li>
+  <li><strong>Annualized ROC</strong> to the later settlement date.</li>
+</ul>
+<div class="warn">Gaps are <strong>indicative</strong> until checked against live depth, current fees, and resolution equivalence. This API makes no profit claims.</div>
+
+<h2>Request</h2>
+<pre>GET /kalshi-predictit-arb?q=governor&amp;limit=10&amp;mode=opportunities</pre>
+<table>
+  <tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>q</code></td><td>string</td><td>—</td><td>Keyword filter (e.g. <code>governor</code>, <code>senate</code>).</td></tr>
+  <tr><td><code>limit</code></td><td>1–25</td><td>10</td><td>Max pairs evaluated per call.</td></tr>
+  <tr><td><code>mode</code></td><td><code>opportunities</code> | <code>all</code></td><td><code>opportunities</code></td><td><code>opportunities</code> returns only executable pairs; <code>all</code> returns every evaluated pair.</td></tr>
+</table>
+
+<h2>Price &amp; payment (x402)</h2>
+<ul>
+  <li><strong>$0.02 USDC per call</strong>, settled on <strong>Base</strong> via the x402 v2 <code>exact</code> scheme.</li>
+  <li>First request returns <code>402</code> with machine-readable payment requirements. Respond with a signed <code>TransferWithAuthorization</code> (EIP-3009) in the <code>PAYMENT-SIGNATURE</code> header (base64url-encoded JSON).</li>
+  <li>Your key <strong>never leaves your machine</strong>: sign offline, the facilitator submits (gasless for you). Refuse anything that isn't Base / <code>exact</code> / Base USDC / within your per-call cap.</li>
+  <li>Reference client: https://github.com/mastertyrone/kalshi-predictit-arb — offline EIP-712 signing, per-call cap, refusal checks. Key via <code>X402_WALLET_KEY</code>, never hardcoded.</li>
+</ul>
+
+<h2>Response schema (live sample, 2026-09-29)</h2>
+<pre>{
+  "q": "senate governor president house fed",
+  "mode": "opportunities",
+  "opportunities": [
+    {
+      "event": "Florida governor party winner? — Republican",
+      "match_score": 0.71,
+      "kalshi": { "ticker": "GOVPARTYFL-26-R", "yes_bid_c": 77, "yes_ask_c": 78 },
+      "predictit": { "market": "Florida governor party winner?", "contract": "Republican", "yes_ask_c": 83, "no_ask_c": 18, "position_limit_usd": 850 },
+      "best_direction": {
+        "direction": "YES_KALSHI__NO_PREDICTIT",
+        "kalshi_price_c": 78, "predictit_price_c": 18, "stake_c": 96,
+        "raw_spread_c": 4, "net_if_yes_wins_c": 2, "net_if_no_wins_c": 7.21,
+        "net_yield_c": 2, "net_yield_pct": 2.08,
+        "fees": { "kalshi_taker_c": 2, "predictit_profit_fee_c": 8.2, "predictit_withdrawal_drag_c": 4.59 }
+      },
+      "days_to_settlement": 400, "roc_annualized_pct": 1.9, "executable": true,
+      "liquidity": { "vwap_buy_c": { "100": 78, "500": 78, "1000": 78 }, "book_depth_usd": 857553.52 },
+      "slippage_ok_100": true
+    }
+  ],
+  "stats": { "pairs_evaluated": 22, "executable": 1, "kalshi_markets_scanned": 25, "predictit_contracts_scanned": 526, "duration_ms": 12616 },
+  "fetched_at": "2026-09-30T03:12:02.667Z"
+}</pre>
+<div class="warn"><strong>Live sample.</strong> Captured 2026-09-29 at 9:12 PM MDT ($0.02 call). Gaps move with the market — response shape and one real datapoint, not a standing opportunity.</div>
+
+<h2>Limits</h2>
+<ul>
+  <li>Political markets only (Kalshi ↔ PredictIt overlap).</li>
+  <li>PredictIt depth is not public — size positions within its $850/contract limit.</li>
+  <li>Cold starts can take several seconds; allow a ~30s timeout.</li>
+</ul>
+
+<h2>Contact</h2>
+<p>Built and operated by Team Takatini. Client library: https://github.com/mastertyrone/kalshi-predictit-arb.</p>
+
+</body>
+</html>
