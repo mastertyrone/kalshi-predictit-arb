@@ -53,3 +53,11 @@ $850/contract position limit.
 
 `q` filters by keyword (default scans major races), `limit` 1–25,
 `mode="all"` includes below-bar pairs for research.
+
+## Using with DRADIS
+
+There's no DRADIS Raptor for this feed. DRADIS keeps paid, wallet-signing
+data sources out of its core, and it has no way to load a Raptor from outside
+its own repo, so we don't ship one. If you run DRADIS and want this signal,
+run this client alongside it as a separate tool. It's a read-only signal and
+doesn't feed DRADIS's trading decisions.
